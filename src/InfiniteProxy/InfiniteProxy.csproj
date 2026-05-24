@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>InfiniteProxy</RootNamespace>
+    <AssemblyName>InfiniteProxy</AssemblyName>
+
+    <Version>1.0.0</Version>
+    <Authors>InfiniteProxy Contributors</Authors>
+    <Description>Background proxy discovery and validation library. Continuously fetches free proxies from ProxyScrape and other sources, checks them 24/7, and keeps a live pool of working endpoints.</Description>
+    <PackageTags>proxy;proxies;proxyscrape;socks5;http;scraper;checker</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/your-username/InfiniteProxy</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/your-username/InfiniteProxy</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="InfiniteProxy.Tests" />
+  </ItemGroup>
+
+</Project>
