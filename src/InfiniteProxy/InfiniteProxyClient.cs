@@ -7,6 +7,10 @@ namespace InfiniteProxy;
 
 /// <summary>
 /// Continuously discovers, validates, and maintains a pool of working free proxies.
+/// <para>
+/// Proxies are validated with real protocol handshakes (plus a data transfer test for SOCKS).
+/// The background scanner periodically re-checks existing proxies and removes dead ones.
+/// </para>
 /// </summary>
 public sealed class InfiniteProxyClient : IAsyncDisposable
 {
@@ -63,6 +67,11 @@ public sealed class InfiniteProxyClient : IAsyncDisposable
     /// Number of working proxies currently in the pool.
     /// </summary>
     public int WorkingCount => _pool.Count;
+
+    /// <summary>
+    /// Whether at least one working proxy is currently available.
+    /// </summary>
+    public bool HasProxies => _pool.Count > 0;
 
     /// <summary>
     /// Raised when a working proxy is added to the pool.

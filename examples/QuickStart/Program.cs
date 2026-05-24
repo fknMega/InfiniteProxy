@@ -4,7 +4,8 @@ var client = new InfiniteProxyClient(new InfiniteProxyOptions
 {
     ProxyTypes = [ProxyType.Http, ProxyType.Socks5],
     FetchInterval = TimeSpan.FromMinutes(5),
-    CheckTimeout = TimeSpan.FromSeconds(8),
+    CheckTimeout = TimeSpan.FromSeconds(10),
+    ConnectTimeout = TimeSpan.FromSeconds(6),
     MaxConcurrentChecks = 30
 });
 

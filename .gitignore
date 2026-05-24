@@ -29,6 +29,7 @@ bld/
 ## NuGet
 *.nupkg
 *.snupkg
+!dist/*.nupkg
 **/packages/*
 !**/packages/build/
 project.lock.json

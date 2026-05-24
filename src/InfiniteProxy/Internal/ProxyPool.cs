@@ -16,7 +16,7 @@ internal sealed class ProxyPool
         var key = CreateKey(proxy);
         if (!_proxies.TryAdd(key, proxy))
         {
-            _proxies[key] = proxy with { LastValidated = proxy.LastValidated };
+            _proxies[key] = proxy;
             return false;
         }
 

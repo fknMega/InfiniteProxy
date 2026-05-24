@@ -9,6 +9,9 @@ namespace InfiniteProxy.Checking;
 
 /// <summary>
 /// Validates proxy candidates by attempting real connections through them.
+/// For SOCKS proxies we also perform a lightweight data transfer test after the
+/// CONNECT handshake succeeds. This significantly reduces the number of "handshake
+/// only" zombies that reach the caller.
 /// </summary>
 public sealed class ProxyChecker
 {
@@ -23,16 +26,16 @@ public sealed class ProxyChecker
         ProxyCandidate candidate,
         CancellationToken cancellationToken = default)
     {
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_options.CheckTimeout);
+        using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        overallCts.CancelAfter(_options.CheckTimeout);
 
         try
         {
             return candidate.Type switch
             {
-                ProxyType.Http => await CheckHttpAsync(candidate, timeoutCts.Token).ConfigureAwait(false),
-                ProxyType.Socks4 => await CheckSocks4Async(candidate, timeoutCts.Token).ConfigureAwait(false),
-                ProxyType.Socks5 => await CheckSocks5Async(candidate, timeoutCts.Token).ConfigureAwait(false),
+                ProxyType.Http => await CheckHttpAsync(candidate, overallCts.Token).ConfigureAwait(false),
+                ProxyType.Socks4 => await CheckSocks4Async(candidate, overallCts.Token).ConfigureAwait(false),
+                ProxyType.Socks5 => await CheckSocks5Async(candidate, overallCts.Token).ConfigureAwait(false),
                 _ => null
             };
         }
@@ -74,7 +77,8 @@ public sealed class ProxyChecker
     {
         var stopwatch = Stopwatch.StartNew();
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        await ConnectAsync(socket, candidate.Host, candidate.Port, cancellationToken).ConfigureAwait(false);
+
+        await ConnectWithTimeoutAsync(socket, candidate.Host, candidate.Port, cancellationToken).ConfigureAwait(false);
 
         if (!IPAddress.TryParse(_options.SocksValidationHost, out var targetAddress))
         {
@@ -97,6 +101,12 @@ public sealed class ProxyChecker
             return null;
         }
 
+        // Real data transfer test — this is the key quality filter
+        if (!await VerifySocksTunnelWithDataAsync(socket, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
         stopwatch.Stop();
         return ToEndpoint(candidate, stopwatch.Elapsed);
     }
@@ -105,7 +115,8 @@ public sealed class ProxyChecker
     {
         var stopwatch = Stopwatch.StartNew();
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        await ConnectAsync(socket, candidate.Host, candidate.Port, cancellationToken).ConfigureAwait(false);
+
+        await ConnectWithTimeoutAsync(socket, candidate.Host, candidate.Port, cancellationToken).ConfigureAwait(false);
 
         await socket.SendAsync(new byte[] { 0x05, 0x01, 0x00 }, SocketFlags.None, cancellationToken).ConfigureAwait(false);
 
@@ -169,6 +180,12 @@ public sealed class ProxyChecker
             return null;
         }
 
+        // Real data transfer test — this is the key quality filter for SOCKS
+        if (!await VerifySocksTunnelWithDataAsync(socket, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
         stopwatch.Stop();
         return ToEndpoint(candidate, stopwatch.Elapsed);
     }
@@ -191,20 +208,31 @@ public sealed class ProxyChecker
         return request;
     }
 
-    private static async Task ConnectAsync(Socket socket, string host, int port, CancellationToken cancellationToken)
+    private async Task ConnectWithTimeoutAsync(Socket socket, string host, int port, CancellationToken overallToken)
     {
-        if (IPAddress.TryParse(host, out var address))
+        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(overallToken);
+        connectCts.CancelAfter(_options.ConnectTimeout);
+
+        try
         {
-            await socket.ConnectAsync(new IPEndPoint(address, port), cancellationToken).ConfigureAwait(false);
-            return;
+            if (IPAddress.TryParse(host, out var address))
+            {
+                await socket.ConnectAsync(new IPEndPoint(address, port), connectCts.Token).ConfigureAwait(false);
+                return;
+            }
+
+            var addresses = await Dns.GetHostAddressesAsync(host, connectCts.Token).ConfigureAwait(false);
+            var target = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+                         ?? addresses.FirstOrDefault()
+                         ?? throw new SocketException((int)SocketError.HostNotFound);
+
+            await socket.ConnectAsync(new IPEndPoint(target, port), connectCts.Token).ConfigureAwait(false);
         }
-
-        var addresses = await Dns.GetHostAddressesAsync(host, cancellationToken).ConfigureAwait(false);
-        var target = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
-                     ?? addresses.FirstOrDefault()
-                     ?? throw new SocketException((int)SocketError.HostNotFound);
-
-        await socket.ConnectAsync(new IPEndPoint(target, port), cancellationToken).ConfigureAwait(false);
+        catch (OperationCanceledException) when (!overallToken.IsCancellationRequested)
+        {
+            // Treat connect timeout as a normal failure (don't throw up)
+            throw new SocketException((int)SocketError.TimedOut);
+        }
     }
 
     private static async Task<int> ReceiveExactAsync(Socket socket, byte[] buffer, CancellationToken cancellationToken)
@@ -225,6 +253,64 @@ public sealed class ProxyChecker
         }
 
         return total;
+    }
+
+    /// <summary>
+    /// After a successful SOCKS CONNECT, send a small real HTTP request over the tunnel
+    /// and verify we get back something that looks like an HTTP response.
+    /// This is the most important quality filter — it catches the very common case
+    /// where the handshake succeeds but the tunnel is dead or blackholed.
+    /// </summary>
+    private async Task<bool> VerifySocksTunnelWithDataAsync(Socket socket, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Use a lightweight request. HEAD keeps the response small.
+            var requestLine = $"HEAD / HTTP/1.1\r\nHost: {_options.SocksValidationHost}\r\nConnection: close\r\n\r\n";
+            var requestBytes = Encoding.ASCII.GetBytes(requestLine);
+
+            await socket.SendAsync(requestBytes, SocketFlags.None, cancellationToken).ConfigureAwait(false);
+
+            // Read until we see at least the end of the status line or we hit our buffer.
+            var buffer = new byte[512];
+            int totalRead = 0;
+
+            while (totalRead < buffer.Length)
+            {
+                int received = await socket.ReceiveAsync(
+                    buffer.AsMemory(totalRead, buffer.Length - totalRead),
+                    SocketFlags.None,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (received == 0)
+                {
+                    // Connection closed before we saw a full status line → bad tunnel.
+                    return false;
+                }
+
+                totalRead += received;
+
+                var text = Encoding.ASCII.GetString(buffer, 0, totalRead);
+
+                if (text.Contains("\r\n"))
+                {
+                    // Any HTTP/ response (even 4xx/5xx) proves the tunnel carried real data.
+                // We don't require 2xx because many public validation targets are quirky.
+                    if (text.StartsWith("HTTP/1.") || text.StartsWith("HTTP/"))
+                        return true;
+
+                    // Got a line but it doesn't look like HTTP at all → treat as failure.
+                    return false;
+                }
+            }
+
+            // Never saw a complete status line within the buffer.
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static ProxyEndpoint ToEndpoint(ProxyCandidate candidate, TimeSpan latency) =>

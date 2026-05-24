@@ -1,5 +1,6 @@
 using InfiniteProxy;
 using InfiniteProxy.Sources;
+using Xunit;
 
 namespace InfiniteProxy.Tests;
 

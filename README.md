@@ -1,37 +1,10 @@
 # InfiniteProxy
 
-[![CI](https://github.com/your-username/InfiniteProxy/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/InfiniteProxy/actions/workflows/ci.yml)
-[![NuGet](https://img.shields.io/nuget/v/InfiniteProxy.svg)](https://www.nuget.org/packages/InfiniteProxy)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+A .NET library that pulls free proxies from public sources, actively validates them, and keeps a live pool of ones that actually work.
 
-**InfiniteProxy** is a .NET library that continuously discovers, validates, and maintains a live pool of free proxies in the background — 24/7.
+It runs in the background, periodically refreshes the lists, and re-checks proxies that were working before. The goal is simple: give you working proxies when you ask for them instead of handing you dead ones from a scraped list.
 
-It polls sources like [ProxyScrape](https://proxyscrape.com/) for updated lists, checks each proxy with real connection tests, and keeps only working endpoints. Call `StartAsync()` and it resolves as soon as at least one validated proxy is ready.
-
-## Features
-
-- **Background scanning** — runs continuously after `StartAsync()`, fetching new lists on a schedule
-- **Update detection** — uses ProxyScrape metadata to re-fetch only when lists change
-- **Real validation** — HTTP via `HttpClient`, SOCKS4/SOCKS5 via handshake + CONNECT
-- **Multiple proxy types** — HTTP, SOCKS4, SOCKS5 (pick which ones you want)
-- **Live pool API** — get all, random, or fastest working proxies at any time
-- **Events** — subscribe to `ProxyAdded` / `ProxyRemoved` for reactive use
-- **Extensible sources** — implement `IProxySource` to add more providers
-
-## Installation
-
-```bash
-dotnet add package InfiniteProxy
-```
-
-Or reference the project directly:
-
-```bash
-git clone https://github.com/your-username/InfiniteProxy.git
-dotnet add YourApp reference path/to/InfiniteProxy/src/InfiniteProxy/InfiniteProxy.csproj
-```
-
-## Quick start
+## Quick Start
 
 ```csharp
 using InfiniteProxy;
@@ -40,109 +13,135 @@ var client = new InfiniteProxyClient(new InfiniteProxyOptions
 {
     ProxyTypes = [ProxyType.Http, ProxyType.Socks5],
     FetchInterval = TimeSpan.FromMinutes(5),
-    CheckTimeout = TimeSpan.FromSeconds(8)
+    CheckTimeout = TimeSpan.FromSeconds(10),
+    ConnectTimeout = TimeSpan.FromSeconds(6)
 });
 
-// Starts background scanning; completes when the first working proxy is found
-ProxyEndpoint first = await client.StartAsync();
+var first = await client.StartAsync();
 Console.WriteLine($"Ready: {first}");
-
-// Use the live pool anytime
-ProxyEndpoint? random = client.GetRandom(ProxyType.Http);
-ProxyEndpoint? fastest = client.GetFastest();
-IReadOnlyList<ProxyEndpoint> all = client.GetProxies();
-
-// React to new proxies
-client.ProxyAdded += (_, e) => Console.WriteLine($"New proxy: {e.Proxy}");
-
-// Stop when done
-await client.StopAsync();
-await client.DisposeAsync();
 ```
 
-## Using proxies with HttpClient
+After `StartAsync` returns you have at least one working proxy and the scanner continues running.
+
+## Using a Proxy + Handling Failures
+
+This is the pattern most people actually need.
 
 ```csharp
-var proxy = client.GetRandom(ProxyType.Http)!;
+using System.Net;
 
+// Grab one
+var proxy = client.GetRandom(ProxyType.Http);
+
+if (proxy is null)
+{
+    // Pool is currently empty. Either wait or fall back to direct.
+    await Task.Delay(TimeSpan.FromSeconds(2));
+    proxy = client.GetRandom(ProxyType.Http);
+}
+
+// Set it up for HttpClient
 var handler = new HttpClientHandler
 {
     Proxy = new WebProxy(proxy.Host, proxy.Port),
     UseProxy = true
 };
 
-using var http = new HttpClient(handler);
-var html = await http.GetStringAsync("https://example.com");
+using var http = new HttpClient(handler)
+{
+    Timeout = TimeSpan.FromSeconds(20)
+};
+
+try
+{
+    var response = await http.GetAsync("https://api.example.com/data");
+    response.EnsureSuccessStatusCode();
+
+    var body = await response.Content.ReadAsStringAsync();
+    Console.WriteLine(body);
+}
+catch (HttpRequestException ex)
+{
+    // The proxy failed during actual use (very common with free proxies).
+    // Ask the client for a different one and retry, or surface the failure.
+    Console.WriteLine($"Proxy {proxy.Address} died: {ex.Message}");
+
+    var replacement = client.GetRandom(ProxyType.Http);
+    if (replacement is not null && replacement.Address != proxy.Address)
+    {
+        // retry logic with replacement, or just let the caller try again on next request
+    }
+}
 ```
+
+A few notes on this pattern:
+- Free proxies die constantly. Treat them as ephemeral.
+- `GetRandom` and `GetFastest` are fast — call them when you need one.
+- Listen to `ProxyRemoved` if you want to know when the client itself evicts a bad one after re-checking.
+
+## Getting Different Kinds of Proxies
+
+```csharp
+var httpProxy   = client.GetRandom(ProxyType.Http);
+var socks5Proxy = client.GetRandom(ProxyType.Socks5);
+var fastest     = client.GetFastest();           // across all types
+var allHttp     = client.GetProxies(ProxyType.Http);
+```
+
+`GetFastest()` uses the latency measured during the last successful validation.
 
 ## Configuration
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ProxyTypes` | HTTP, SOCKS4, SOCKS5 | Which protocols to fetch and validate |
-| `FetchInterval` | 5 minutes | How often to poll sources for updates |
-| `RecheckInterval` | 15 minutes | How often to re-validate pooled proxies |
-| `MaxConcurrentChecks` | 50 | Parallel validation limit |
-| `CheckTimeout` | 10 seconds | Per-proxy validation timeout |
-| `HttpValidationUrl` | `http://httpbin.org/ip` | URL for HTTP proxy checks |
-| `SocksValidationHost` | `httpbin.org` | Host for SOCKS CONNECT checks |
-| `Country` | `null` (all) | ISO country filter for ProxyScrape |
-| `SourceLimit` | 2000 | Max proxies per fetch (ProxyScrape max) |
-
-## How it works
-
-```mermaid
-flowchart LR
-    A[StartAsync] --> B[Background loop]
-    B --> C[ProxyScrape API]
-    C --> D{List updated?}
-    D -->|Yes| E[Fetch candidates]
-    D -->|No| B
-    E --> F[Validate proxies]
-    F --> G[Working pool]
-    G --> H[StartAsync resolves]
-    B --> I[Re-check existing]
-    I --> F
+```csharp
+new InfiniteProxyOptions
+{
+    ProxyTypes = [ProxyType.Http, ProxyType.Socks4, ProxyType.Socks5],
+    FetchInterval = TimeSpan.FromMinutes(5),     // how often we ask for fresh lists
+    RecheckInterval = TimeSpan.FromMinutes(15),  // how often we re-test proxies we already have
+    MaxConcurrentChecks = 50,
+    CheckTimeout = TimeSpan.FromSeconds(10),     // hard cap for an entire validation
+    ConnectTimeout = TimeSpan.FromSeconds(6),    // time allowed just to reach the proxy
+    HttpValidationUrl = new Uri("http://httpbin.org/ip"),
+    SocksValidationHost = "httpbin.org",
+    SocksValidationPort = 80,
+    Country = null,      // "us", "de", etc. or null for worldwide
+    SourceLimit = 2000
+}
 ```
 
-1. **Fetch** — polls ProxyScrape (`/v4/free-proxy-list/get`) per enabled protocol
-2. **Detect updates** — compares `proxyinfo` fingerprints to avoid redundant downloads
-3. **Validate** — runs concurrent real connection checks with configurable timeout
-4. **Pool** — stores working proxies; removes dead ones on re-check
-5. **Ready** — `StartAsync()` completes when the first proxy passes validation
+### How Validation Works Now
 
-## Custom sources
+- HTTP proxies: we make a real HTTP request through them.
+- SOCKS4/SOCKS5: we do the proper CONNECT handshake **and then send actual data** over the tunnel. This filters out a lot of proxies that only pretend to work during the handshake.
+- Proxies that were previously good get re-tested in the background. Bad ones are removed automatically.
 
-Implement `IProxySource` to plug in additional providers:
+We also use a separate connect timeout so a slow-to-respond proxy doesn't eat the whole check budget.
+
+## Custom Sources
+
+You can add your own providers by implementing `IProxySource`. Pass them when constructing the client:
 
 ```csharp
-public sealed class MyProxySource : IProxySource
+var client = new InfiniteProxyClient(options, new[]
 {
-    public string Name => "MySource";
-
-    public Task<IReadOnlyList<ProxyCandidate>> FetchAsync(ProxyType type, CancellationToken ct = default)
-    {
-        // Return ip:port candidates
-    }
-
-    public Task<ProxySourceInfo?> GetInfoAsync(ProxyType type, CancellationToken ct = default)
-    {
-        // Return fingerprint/count/last-updated for change detection
-    }
-}
-
-var client = new InfiniteProxyClient(options, [new ProxyScrapeSource(options), new MyProxySource()]);
+    new ProxyScrapeSource(options),
+    new MyOtherProxySource()
+});
 ```
+
+See `IProxySource.cs` for the two methods you need (`FetchAsync` and the optional `GetInfoAsync` for change detection).
+
+## When the Pool Is Empty
+
+Nothing explodes. `GetRandom` / `GetFastest` just return null, and `HasProxies` is false.
+
+The background loop keeps running and will surface new proxies through the `ProxyAdded` event when they become available.
 
 ## Requirements
 
 - .NET 8.0+
-- Network access to ProxyScrape and validation endpoints
-
-## Disclaimer
-
-Free public proxies are unreliable by nature. InfiniteProxy validates connectivity but does not guarantee anonymity, speed, or uptime. Use responsibly and comply with applicable laws and terms of service.
+- Outbound network access (the whole point)
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See LICENSE.

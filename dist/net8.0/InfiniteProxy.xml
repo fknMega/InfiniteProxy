@@ -1,0 +1,188 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>InfiniteProxy</name>
+    </assembly>
+    <members>
+        <member name="T:InfiniteProxy.Checking.ProxyChecker">
+            <summary>
+            Validates proxy candidates by attempting real connections through them.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.InfiniteProxyClient">
+            <summary>
+            Continuously discovers, validates, and maintains a pool of working free proxies.
+            </summary>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.#ctor(InfiniteProxy.InfiniteProxyOptions)">
+            <summary>
+            Creates a client with ProxyScrape as the default source.
+            </summary>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.#ctor(InfiniteProxy.InfiniteProxyOptions,System.Collections.Generic.IEnumerable{InfiniteProxy.Sources.IProxySource})">
+            <summary>
+            Creates a client with custom sources (useful for testing or adding providers).
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyClient.IsRunning">
+            <summary>
+            Whether the background scanner is running.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyClient.WorkingCount">
+            <summary>
+            Number of working proxies currently in the pool.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyClient.HasProxies">
+            <summary>
+            Whether at least one working proxy is currently available.
+            </summary>
+        </member>
+        <member name="E:InfiniteProxy.InfiniteProxyClient.ProxyAdded">
+            <summary>
+            Raised when a working proxy is added to the pool.
+            </summary>
+        </member>
+        <member name="E:InfiniteProxy.InfiniteProxyClient.ProxyRemoved">
+            <summary>
+            Raised when a proxy is removed after failing re-validation.
+            </summary>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.StartAsync(System.Threading.CancellationToken)">
+            <summary>
+            Starts the 24/7 background scanner and completes once at least one working proxy is available.
+            </summary>
+            <param name="cancellationToken">Cancel waiting for the first proxy. The scanner keeps running unless <see cref="M:InfiniteProxy.InfiniteProxyClient.StopAsync"/> is called.</param>
+            <returns>The first validated proxy endpoint.</returns>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.GetProxies(System.Nullable{InfiniteProxy.ProxyType})">
+            <summary>
+            Returns all working proxies, optionally filtered by type.
+            </summary>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.GetRandom(System.Nullable{InfiniteProxy.ProxyType})">
+            <summary>
+            Returns a random working proxy, optionally filtered by type.
+            </summary>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.GetFastest(System.Nullable{InfiniteProxy.ProxyType})">
+            <summary>
+            Returns the fastest working proxy by measured latency, optionally filtered by type.
+            </summary>
+        </member>
+        <member name="M:InfiniteProxy.InfiniteProxyClient.StopAsync">
+            <summary>
+            Stops the background scanner.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.InfiniteProxyOptions">
+            <summary>
+            Configuration for <see cref="T:InfiniteProxy.InfiniteProxyClient"/>.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.ProxyTypes">
+            <summary>
+            Proxy types to fetch and validate. Defaults to HTTP, SOCKS4, and SOCKS5.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.FetchInterval">
+            <summary>
+            How often to poll sources for updated proxy lists.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.RecheckInterval">
+            <summary>
+            How often to re-validate proxies already in the pool.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.MaxConcurrentChecks">
+            <summary>
+            Maximum number of concurrent proxy validation tasks.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.CheckTimeout">
+            <summary>
+            Timeout for each individual proxy check.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.HttpValidationUrl">
+            <summary>
+            URL used to validate HTTP proxies. Must respond with HTTP 200.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.SocksValidationHost">
+            <summary>
+            Host used to validate SOCKS proxies via a CONNECT handshake.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.SocksValidationPort">
+            <summary>
+            Port used for SOCKS validation CONNECT requests.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.Country">
+            <summary>
+            ISO 3166-1 alpha-2 country filter for ProxyScrape, or <c>null</c> for all countries.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.SourceTimeoutMs">
+            <summary>
+            Maximum proxy timeout reported by ProxyScrape, in milliseconds.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.InfiniteProxyOptions.SourceLimit">
+            <summary>
+            Maximum proxies to fetch per source request.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.ProxyEndpoint">
+            <summary>
+            A validated proxy endpoint discovered by the scanner.
+            </summary>
+        </member>
+        <member name="P:InfiniteProxy.ProxyEndpoint.Address">
+            <summary>
+            Returns the proxy in <c>host:port</c> format.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.ProxyAddedEventArgs">
+            <summary>
+            Event data when a working proxy is added to the pool.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.ProxyRemovedEventArgs">
+            <summary>
+            Event data when a proxy is removed from the pool after failing validation.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.ProxyType">
+            <summary>
+            Supported proxy protocol types.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.Sources.ProxySourceInfo">
+            <summary>
+            Metadata returned by a proxy source to detect list updates.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.Sources.ProxyCandidate">
+            <summary>
+            A raw proxy candidate before validation.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.Sources.IProxySource">
+            <summary>
+            Abstraction for a remote proxy list provider.
+            </summary>
+        </member>
+        <member name="T:InfiniteProxy.Sources.ProxyScrapeSource">
+            <summary>
+            Fetches free proxy lists from the ProxyScrape public API.
+            </summary>
+            <remarks>
+            API docs: https://docs.proxyscrape.com/api-reference/public-api/get-proxy-list
+            </remarks>
+        </member>
+    </members>
+</doc>

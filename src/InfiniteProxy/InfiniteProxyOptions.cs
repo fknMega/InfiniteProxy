@@ -31,9 +31,16 @@ public sealed class InfiniteProxyOptions
     public int MaxConcurrentChecks { get; init; } = 50;
 
     /// <summary>
-    /// Timeout for each individual proxy check.
+    /// Timeout for each individual proxy check (overall budget).
     /// </summary>
     public TimeSpan CheckTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Timeout specifically for connecting to the proxy host (and DNS resolution).
+    /// This primarily affects SOCKS validation. HTTP proxy checks use HttpClient's
+    /// own connection handling (governed by the overall CheckTimeout).
+    /// </summary>
+    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(6);
 
     /// <summary>
     /// URL used to validate HTTP proxies. Must respond with HTTP 200.
@@ -41,12 +48,13 @@ public sealed class InfiniteProxyOptions
     public Uri HttpValidationUrl { get; init; } = new("http://httpbin.org/ip");
 
     /// <summary>
-    /// Host used to validate SOCKS proxies via a CONNECT handshake.
+    /// Host used to validate SOCKS proxies. We perform a full CONNECT handshake
+    /// and then a small data transfer test to this host.
     /// </summary>
     public string SocksValidationHost { get; init; } = "httpbin.org";
 
     /// <summary>
-    /// Port used for SOCKS validation CONNECT requests.
+    /// Port used for the SOCKS validation target (the data probe after CONNECT).
     /// </summary>
     public int SocksValidationPort { get; init; } = 80;
 
