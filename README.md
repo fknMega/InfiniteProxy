@@ -6,22 +6,31 @@ It runs in the background, periodically refreshes the lists, and re-checks proxi
 
 ## Quick Start
 
+Typical usage:
+
 ```csharp
 using InfiniteProxy;
 
-var client = new InfiniteProxyClient(new InfiniteProxyOptions
-{
-    ProxyTypes = [ProxyType.Http, ProxyType.Socks5],
-    FetchInterval = TimeSpan.FromMinutes(5),
-    CheckTimeout = TimeSpan.FromSeconds(10),
-    ConnectTimeout = TimeSpan.FromSeconds(6)
-});
+var client = new InfiniteProxyClient();
 
-var first = await client.StartAsync();
-Console.WriteLine($"Ready: {first}");
+// This starts the background scraping + checking and waits until
+// at least one working proxy is available.
+await client.WaitUntilReadyAsync();
+
+var proxy = client.GetRandom(ProxyType.Http)!;
+
+// Use it with HttpClient
+var handler = new HttpClientHandler
+{
+    Proxy = new WebProxy(proxy.Host, proxy.Port),
+    UseProxy = true
+};
+using var http = new HttpClient(handler);
+
+var html = await http.GetStringAsync("https://example.com");
 ```
 
-After `StartAsync` returns you have at least one working proxy and the scanner continues running.
+After `WaitUntilReadyAsync()` returns, the pool has at least one good proxy and the scanner continues running in the background.
 
 ## Using a Proxy + Handling Failures
 

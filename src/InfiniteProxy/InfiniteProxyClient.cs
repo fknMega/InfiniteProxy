@@ -92,14 +92,29 @@ public sealed class InfiniteProxyClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Starts the 24/7 background scanner and completes once at least one working proxy is available.
+    /// Starts the background scanner and returns the first working proxy once one is available.
+    /// This is a convenience method on top of <see cref="WaitUntilReadyAsync"/>.
     /// </summary>
     /// <param name="cancellationToken">Cancel waiting for the first proxy. The scanner keeps running unless <see cref="StopAsync"/> is called.</param>
     /// <returns>The first validated proxy endpoint.</returns>
     public async Task<ProxyEndpoint> StartAsync(CancellationToken cancellationToken = default)
     {
+        await WaitUntilReadyAsync(cancellationToken).ConfigureAwait(false);
+        return _pool.GetRandom()!;
+    }
+
+    /// <summary>
+    /// Ensures the background scraping and checking loop is running,
+    /// then completes once at least one working proxy is available.
+    /// 
+    /// This is the recommended method when you just want to wait until the client
+    /// has at least one good proxy before proceeding.
+    /// </summary>
+    public async Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
+    {
         ObjectDisposedException.ThrowIf(_disposed == 1, this);
 
+        // Start the constant scraping + validation background loop (only once)
         if (Interlocked.CompareExchange(ref _started, 1, 0) == 0)
         {
             _cts = new CancellationTokenSource();
@@ -108,23 +123,24 @@ public sealed class InfiniteProxyClient : IAsyncDisposable
 
         if (_pool.Count > 0)
         {
-            return _pool.GetRandom()!;
+            return;
         }
 
-        var waitTcs = new TaskCompletionSource<ProxyEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Wait until the background scanner adds the first valid proxy
+        var waitTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         EventHandler<ProxyAddedEventArgs>? handler = null;
-        handler = (_, args) => waitTcs.TrySetResult(args.Proxy);
+        handler = (_, _) => waitTcs.TrySetResult(true);
         _pool.ProxyAdded += handler;
 
         try
         {
             await using var registration = cancellationToken.Register(static state =>
             {
-                var tcs = (TaskCompletionSource<ProxyEndpoint>)state!;
+                var tcs = (TaskCompletionSource<bool>)state!;
                 tcs.TrySetCanceled();
             }, waitTcs).ConfigureAwait(false);
 
-            return await waitTcs.Task.ConfigureAwait(false);
+            await waitTcs.Task.ConfigureAwait(false);
         }
         finally
         {

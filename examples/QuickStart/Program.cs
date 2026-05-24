@@ -13,10 +13,12 @@ client.ProxyAdded += (_, e) => Console.WriteLine($"[+] {e.Proxy}");
 client.ProxyRemoved += (_, e) => Console.WriteLine($"[-] {e.Proxy}");
 
 Console.WriteLine("Starting InfiniteProxy background scanner...");
-Console.WriteLine("Waiting for the first working proxy...\n");
+Console.WriteLine("Waiting until at least one working proxy is available...\n");
 
-var first = await client.StartAsync();
-Console.WriteLine($"\nFirst proxy ready: {first}");
+await client.WaitUntilReadyAsync();
+
+var proxy = client.GetRandom(ProxyType.Http)!;
+Console.WriteLine($"First proxy ready: {proxy}");
 Console.WriteLine($"Pool size: {client.WorkingCount}");
 
 var fastest = client.GetFastest();
